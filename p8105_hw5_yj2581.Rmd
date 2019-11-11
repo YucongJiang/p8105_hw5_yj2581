@@ -11,7 +11,7 @@ library(tidyverse)
 
 ## Problem 1
 
-```{r load_raw_data}
+```{r filling}
 set.seed(10)
 
 iris_with_missing = iris %>% 
@@ -30,12 +30,106 @@ filling = function(x){
 }
 
 iris_filled = map_df(.x = iris_with_missing, ~ filling(.x))
+
+iris_filled
 ```
 
 #### Comment on the code
 
 ## Problem 2
 
+```{r batch, message = FALSE, warning = FALSE}
+filenames = list.files("data/")
 
+read_csv_plus <- function(x){
+  read_csv(paste("data/", x, sep = "")) %>%
+  mutate(
+    filename = str_sub(x, 1, 6),
+    group = ifelse(str_detect(x, "con"), "control", "experiment"),
+    ind = str_sub(x, 5, 6)
+  )
+}
 
+batch_data <- map_df(.x = filenames, ~ read_csv_plus(.x)) %>%
+  mutate(
+    participant = factor(filename),
+    group = factor(group, levels = c("control", "experiment"))
+  ) %>%
+  select(-filename)
 
+batch_data
+
+batch_data %>% 
+  pivot_longer(
+    week_1:week_8,
+    names_prefix = "week_",
+    names_to = "week",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(x = week, y = value, group = participant, color = participant)) +
+  geom_line()
+```
+
+#### Comment on the result
+
+## Problem 3
+
+```{r simulation}
+set.seed(2581)
+
+sim_regression <- function(n, beta0 = 2, beta1 = 0) {
+  
+  sim_data = tibble(
+    x = rnorm(n, mean = 0, sd = 1),
+    y = beta0 + beta1 * x + rnorm(n, 0, sqrt(50))
+  )
+  
+  ls_fit = lm(y ~ x, data = sim_data)
+  
+  broom::tidy(ls_fit) %>%
+    filter(term == "x") %>%
+    select(estimate, p.value)
+}
+
+sim_result_0 <- rerun(1000, sim_regression(n = 30)) %>%
+  bind_rows()
+
+head(sim_result_0)
+
+sim_result_all <- map_df(.x = 0:6, ~ rerun(1000, sim_regression(n = 30, beta1 = .x) %>%
+                           mutate(beta1 = .x)) %>% bind_rows()
+                         )
+
+sim_result_all %>%
+  mutate(
+    reject = ifelse(p.value < 0.05, 1, 0)
+  ) %>%
+  group_by(beta1) %>%
+  summarize(proportion = mean(reject)) %>%
+  mutate(
+    beta1 = factor(beta1)
+  ) %>%
+  ggplot(aes(x = beta1, y = proportion, fill = beta1)) +
+  geom_histogram(stat = "identity")
+
+sim_result_avg <- sim_result_all %>%
+  group_by(beta1) %>%
+  summarize(avg_estimate = mean(estimate)) %>%
+  mutate(
+    beta1 = factor(beta1),
+    ind = "all"
+  )
+
+sim_rejected_avg <- sim_result_all %>%
+  filter(p.value < 0.05) %>%
+  group_by(beta1) %>%
+  summarize(avg_estimate = mean(estimate)) %>%
+  mutate(
+    beta1 = factor(beta1),
+    ind = "rejected"
+  )
+
+bind_rows(sim_result_avg, sim_rejected_avg) %>%
+  ggplot(aes(x = beta1, y = avg_estimate, group = ind, color = ind)) +
+  geom_point() + geom_line()
+```
